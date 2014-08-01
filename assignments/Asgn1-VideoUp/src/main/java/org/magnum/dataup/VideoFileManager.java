@@ -21,12 +21,23 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Set;
 
+import javax.servlet.http.HttpServletRequest;
+
+import org.hibernate.annotations.Synchronize;
 import org.magnum.dataup.model.Video;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
+import com.google.gson.annotations.Since;
 
 /**
  * This class provides a simple implementation to store video binary
@@ -46,18 +57,23 @@ public class VideoFileManager {
 	 * @return
 	 * @throws IOException
 	 */
-	public static VideoFileManager get() throws IOException {
-		return new VideoFileManager();
+	public synchronized static VideoFileManager get() throws IOException {
+		if (instance == null){
+			instance = new VideoFileManager();
+		} 
+		return instance;
 	}
 	
+	private static VideoFileManager instance = null;
 	private Path targetDir_ = Paths.get("videos");
-	
+	private Set <Video> videos;
 	// The VideoFileManager.get() method should be used
 	// to obtain an instance
 	private VideoFileManager() throws IOException{
 		if(!Files.exists(targetDir_)){
 			Files.createDirectories(targetDir_);
 		}
+		videos = new HashSet<>(); 
 	}
 	
 	// Private helper method for resolving video file paths
@@ -74,7 +90,7 @@ public class VideoFileManager {
 	 * @param v
 	 * @return
 	 */
-	public boolean hasVideoData(Video v){
+	public synchronized boolean hasVideoData(Video v){
 		Path source = getVideoPath(v);
 		return Files.exists(source);
 	}
@@ -89,7 +105,7 @@ public class VideoFileManager {
 	 * @param out
 	 * @throws IOException 
 	 */
-	public void copyVideoData(Video v, OutputStream out) throws IOException {
+	public synchronized void copyVideoData(Video v, OutputStream out) throws IOException {
 		Path source = getVideoPath(v);
 		if(!Files.exists(source)){
 			throw new FileNotFoundException("Unable to find the referenced video file for videoId:"+v.getId());
@@ -106,11 +122,54 @@ public class VideoFileManager {
 	 * @param videoData
 	 * @throws IOException
 	 */
-	public void saveVideoData(Video v, InputStream videoData) throws IOException{
+	public synchronized void saveVideoData(Video v, InputStream videoData) throws IOException{
 		assert(videoData != null);
 		
 		Path target = getVideoPath(v);
 		Files.copy(videoData, target, StandardCopyOption.REPLACE_EXISTING);
 	}
+	
+	public synchronized Collection<Video> findAllVideos() {
+		return videos;
+	}
+	
+	public synchronized Video saveVideo(Video v) {
+		if (videos.contains(v)){
+			videos.remove(v);
+		}
+		v.setId(getVideoId());
+		v.setDataUrl(getDataUrl(v.getId()));
+		videos.add(v);
+		Path target = getVideoPath(v);
+		try {
+		    // Create the empty file with default permissions, etc.
+		    Files.createFile(target);
+		} catch (FileAlreadyExistsException x) {
+		    
+		} catch (IOException x) {
+		    // Some other sort of failure, such as permissions.
+		    System.err.format("createFile error: %s%n", x);
+		}
+		return v;
+	}
+	
+	private long getVideoId() {
+		return videos.size() + 1;
+	}
+	
+	 private String getDataUrl(long videoId){
+         String url = getUrlBaseForLocalServer() + "/video/" + videoId + "/data";
+         return url;
+     }
+
+     private String getUrlBaseForLocalServer() {
+        HttpServletRequest request = 
+            ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getRequest();
+        String base = 
+           "http://"+request.getServerName() 
+           + ((request.getServerPort() != 80) ? ":"+request.getServerPort() : "");
+        return base;
+     }
+
 	
 }
